@@ -81,7 +81,7 @@ object SettingsBackup {
             if (!prefsDir.exists()) prefsDir.mkdirs()
 
             var restored = 0
-            for (name in json.keySet()) {
+            for (name in json.keys()) {
                 if (name == "format_version" || name == "app") continue
                 if (!name.endsWith(".xml")) continue
                 File(prefsDir, name).writeText(json.optString(name))

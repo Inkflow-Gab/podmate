@@ -234,6 +234,14 @@ fun EqualizerScreen(
             }
         }
 
+        EqPresetsSection(
+            currentEq = customEq,
+            onApply = { low, mid, high ->
+                setCustomEq(low, mid, high)
+                setCustomEqEnabled(true)
+            }
+        )
+
         Spacer(modifier = Modifier.height(bottomPadding))
     }
 }
@@ -719,18 +727,6 @@ fun EqualizerCard(
                 }
             }
         }
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        EqPresetsSection(
-            currentEq = customEq,
-            onApply = { low, mid, high ->
-                setCustomEq(low, mid, high)
-                setCustomEqEnabled(true)
-            }
-        )
-
-        Spacer(modifier = Modifier.height(bottomPadding))
     }
 }
 
