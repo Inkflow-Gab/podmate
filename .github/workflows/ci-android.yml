@@ -37,7 +37,9 @@ jobs:
         run: |
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager --install "platform-tools" "platforms;android-37" "ndk;30.0.14904198" "cmake;3.22.1"
+          # Platform/build-tools are fetched automatically by AGP when licenses are accepted.
+          sdkmanager --install "platform-tools" "ndk;30.0.14904198" "cmake;3.22.1"
+          sdkmanager --list_installed | head -20
 
       - name: Gradle cache
         uses: actions/cache@v4
