@@ -33,13 +33,11 @@ jobs:
           distribution: zulu
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK & CMake
+      - name: Accept licenses & install SDK packages
         run: |
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platform-tools" "platforms;android-37" "ndk;30.0.14904198" "cmake;3.22.1"
+          sdkmanager --install "platform-tools" "platforms;android-37" "ndk;30.0.14904198" "cmake;3.22.1"
 
       - name: Gradle cache
         uses: actions/cache@v4
