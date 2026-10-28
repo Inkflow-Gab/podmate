@@ -1,0 +1,136 @@
+name: Android CI
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'android/**'
+      - '.github/workflows/ci-android.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC" -Dorg.gradle.workers.max=4'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK & CMake
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-37" "ndk;30.0.14904198" "cmake;3.22.1"
+
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/wrapper
+            ~/.gradle/caches
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle/libs.versions.toml', 'android/version.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Decode keystore
+        env:
+          RELEASE_KEYSTORE_FILE: ${{ secrets.RELEASE_KEYSTORE_FILE }}
+        run: echo "${RELEASE_KEYSTORE_FILE}" | base64 --decode > android/release.keystore
+
+      - name: Write local.properties (signing)
+        env:
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          cat <<EOF > android/local.properties
+          RELEASE_STORE_FILE=../release.keystore
+          RELEASE_STORE_PASSWORD=${RELEASE_STORE_PASSWORD}
+          RELEASE_KEY_ALIAS=${RELEASE_KEY_ALIAS}
+          RELEASE_KEY_PASSWORD=${RELEASE_KEY_PASSWORD}
+          EOF
+
+      - name: Read version
+        id: version
+        run: |
+          MAJOR=$(awk -F= '/^major=/{print $2}' android/version.properties)
+          MINOR=$(awk -F= '/^minor=/{print $2}' android/version.properties)
+          PATCH=$(awk -F= '/^patch=/{print $2}' android/version.properties)
+          STAGE=$(awk -F= '/^stage=/{print $2}' android/version.properties)
+          BUILD=$(awk -F= '/^build=/{print $2}' android/version.properties)
+          NAME="${MAJOR}.${MINOR}.${PATCH}"
+          if [ "$STAGE" != "stable" ]; then NAME="${NAME}-${STAGE}.${BUILD}"; fi
+          case "$STAGE" in
+            alpha) STAGE_CODE=0 ;;
+            beta) STAGE_CODE=1 ;;
+            rc) STAGE_CODE=2 ;;
+            *) STAGE_CODE=3 ;;
+          esac
+          VERSION_CODE=$((MAJOR * 100000000 + MINOR * 1000000 + PATCH * 10000 + STAGE_CODE * 100 + BUILD))
+          echo "version_name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release APK
+        run: ./gradlew assembleFossRelease --stacktrace
+        working-directory: android
+
+      - name: Rename APK
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/foss/release/app-foss-release.apk \
+            "dist/PodMate-v${{ steps.version.outputs.version_name }}-${{ steps.version.outputs.version_code }}-release.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: podmate-release-apk
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - name: Create or update GitHub release (pushes to main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ steps.version.outputs.version_name }}
+        run: |
+          set -e
+          cd dist
+          APK=$(ls *.apk)
+          RELEASE_BODY="$(cat <<'BODY'
+          Signed release APK of PodMate.
+
+          Install: download the APK, allow "install unknown apps" for the browser, and install it.
+
+          Upgrades install directly over previous PodMate releases (same signing key).
+
+          Built automatically from the latest commit on `main`. The source is published under GPL-3.0; PodMate is a fork of [LibrePods](https://github.com/kavishdevar/librepods).
+          BODY
+          )"
+          if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" &>/dev/null; then
+            gh release upload "$TAG" "$APK" --clobber --repo "${GITHUB_REPOSITORY}"
+            gh release edit "$TAG" --repo "${GITHUB_REPOSITORY}" --notes "$RELEASE_BODY"
+          else
+            gh release create "$TAG" "$APK" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "PodMate $TAG" \
+              --notes "$RELEASE_BODY" \
+              --generate-notes
+          fi
