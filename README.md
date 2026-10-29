@@ -34,6 +34,17 @@ Every push to `main` is built **automatically on GitHub Actions** and published 
 - 🎚️ **Equalizer presets** — save your custom 3-band EQ as named presets, apply them with one tap,
   and export/import presets as JSON.
 
+### v1.2.2 — rootless battery via the standard GATT Battery Service
+
+- 🔋 **GATT Battery Service fallback (new).** When no Apple BLE status ads are seen at all
+  (many clones send *nothing* on Apple's channel), PodMate now also connects to the earbuds'
+  **standard Bluetooth Battery Service** (0x180F/0x2A19) — the exact mechanism Android's own
+  quick settings uses. Works on any phone with the normal Nearby-connect permission:
+  **no root, no Magisk, no LSPosed, no Shizuku needed.**
+- 🛠️ The battery-only fallback also now triggers reliably even when clone AirPods never
+  broadcast Apple's status message, and hands off cleanly to full mode if a partly-compatible
+  clone *does* let the control channel connect later.
+
 ### v1.2.1 — battery-only mode for clone AirPods & non-rooted phones
 
 - 🔋 **Battery-only ("limited") mode.** If Apple's control channel can't be established — the

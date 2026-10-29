@@ -84,6 +84,7 @@ import me.kavishdevar.librepods.BuildConfig
 import me.kavishdevar.librepods.MainActivity
 import me.kavishdevar.librepods.R
 import me.kavishdevar.librepods.bluetooth.AACPManager
+import me.kavishdevar.librepods.bluetooth.GattBatteryManager
 import me.kavishdevar.librepods.bluetooth.AACPManager.Companion.StemPressType
 import me.kavishdevar.librepods.bluetooth.ATTHandles
 import me.kavishdevar.librepods.bluetooth.ATTManagerv2
@@ -904,21 +905,25 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     var bleFallbackActive = false
         private set
 
+    private var gattBatteryManager: GattBatteryManager? = null
+
     fun maybeAnnounceBleFallback() {
         if (BluetoothConnectionManager.aacpSocket?.isConnected == true || bleFallbackActive) return
-        val status = bleManager.getMostRecentStatus() ?: return
-        if (status.connectionState == "Disconnected") return
+        val status = bleManager.getMostRecentStatus()
+        if (status?.connectionState == "Disconnected") return
         bleFallbackActive = true
         config.bleOnlyMode = true
         Log.d(TAG, "L2CAP unavailable — falling back to battery-only (BLE) mode")
-        batteryNotification.setBatteryDirect(
-            leftLevel = status.leftBattery ?: 0,
-            leftCharging = status.isLeftCharging == true,
-            rightLevel = status.rightBattery ?: 0,
-            rightCharging = status.isRightCharging == true,
-            caseLevel = status.caseBattery ?: 0,
-            caseCharging = status.isCaseCharging == true
-        )
+        if (status != null) {
+            batteryNotification.setBatteryDirect(
+                leftLevel = status.leftBattery ?: 0,
+                leftCharging = status.isLeftCharging == true,
+                rightLevel = status.rightBattery ?: 0,
+                rightCharging = status.isRightCharging == true,
+                caseLevel = status.caseBattery ?: 0,
+                caseCharging = status.isCaseCharging == true
+            )
+        }
         updateBattery()
         updateNotificationContent(true, config.deviceName, batteryNotification.getBattery())
         sendBroadcast(
@@ -926,11 +931,49 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 setPackage(packageName)
             }
         )
+        // Belt & braces for clones that never broadcast Apple's status message:
+        // subscribe to the standard GATT Battery Service (no privileges needed).
+        startGattBatteryReader()
+    }
+
+    /**
+     * Reads battery from the earbuds' standard GATT Battery Service (0x180F).
+     * Many clone AirPods expose it — it's how Android's own quick settings gets
+     * their battery. Works with only the Nearby-connect permission, no root.
+     */
+    @SuppressLint("MissingPermission")
+    private fun startGattBatteryReader() {
+        if (gattBatteryManager != null) return
+        if (checkSelfPermission("android.permission.BLUETOOTH_CONNECT") != PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+        val address = macAddress.ifEmpty {
+            sharedPreferences.getString("mac_address", "") ?: ""
+        }
+        if (address.isEmpty()) return
+        val adapter = getSystemService(BluetoothManager::class.java).adapter ?: return
+        val device = try {
+            adapter.getRemoteDevice(address)
+        } catch (e: Exception) {
+            Log.w(TAG, "Invalid saved MAC for GATT battery reader: $address")
+            return
+        }
+        gattBatteryManager = GattBatteryManager(this) { level ->
+            Log.d(TAG, "GATT battery level: $level")
+            batteryNotification.setGattBattery(level)
+            updateBattery()
+        }.also { it.connect(device) }
+    }
+
+    private fun stopGattBatteryReader() {
+        gattBatteryManager?.stop()
+        gattBatteryManager = null
     }
 
     fun resetBleFallback() {
         bleFallbackActive = false
         config.bleOnlyMode = false
+        stopGattBatteryReader()
     }
 
     @Suppress("unused")
@@ -3058,6 +3101,10 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                                 )
                             }
                         }
+                        // Full control channel is up — no longer need the
+                        // battery-only fallback (if it was active, e.g. clone
+                        // AirPods that partly implement the protocol).
+                        if (bleFallbackActive) resetBleFallback()
                         sendBroadcast(Intent(AirPodsNotifications.AIRPODS_L2CAP_CONNECTED))
                     } catch (e: Exception) {
 //                        sharedPreferences.edit { putBoolean("connection_successful", false) }

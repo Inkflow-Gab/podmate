@@ -186,6 +186,17 @@ class AirPodsNotifications {
             case = Battery(BatteryComponent.CASE, caseLevel, if (caseCharging) BatteryStatus.CHARGING else BatteryStatus.NOT_CHARGING)
         }
 
+        /**
+         * Single combined level from the standard GATT Battery Service
+         * (clone/"fake" AirPods etc.). There is one value for the buds — shown
+         * for both left and right; the case stays hidden (DISCONNECTED).
+         */
+        fun setGattBattery(level: Int) {
+            first = Battery(BatteryComponent.LEFT, level, BatteryStatus.NOT_CHARGING)
+            second = Battery(BatteryComponent.RIGHT, level, BatteryStatus.NOT_CHARGING)
+            case = Battery(BatteryComponent.CASE, 0, BatteryStatus.DISCONNECTED)
+        }
+
         fun setBattery(data: ByteArray) {
             if (data.size != 22) {
                 return
