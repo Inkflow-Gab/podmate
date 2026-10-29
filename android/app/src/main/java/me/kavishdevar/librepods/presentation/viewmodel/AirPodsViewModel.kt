@@ -62,6 +62,10 @@ data class AirPodsUiState(
 
     val isLocallyConnected: Boolean = false,
 
+    /** True when the control channel is unavailable but BLE battery works
+     *  (clone AirPods, or phones whose Bluetooth stack needs root). */
+    val isBleOnly: Boolean = false,
+
     val instance: AirPodsInstance? = null,
     val capabilities: Set<Capability> = emptySet(),
 
@@ -323,13 +327,19 @@ class AirPodsViewModel(
                 if (!isDemoMode) when (action) {
                     AirPodsNotifications.AIRPODS_L2CAP_CONNECTED -> {
                         _uiState.update {
-                            it.copy(isLocallyConnected = true)
+                            it.copy(isLocallyConnected = true, isBleOnly = false)
+                        }
+                    }
+
+                    AirPodsNotifications.AIRPODS_BLE_FALLBACK -> {
+                        _uiState.update {
+                            it.copy(isLocallyConnected = true, isBleOnly = true)
                         }
                     }
 
                     AirPodsNotifications.AIRPODS_DISCONNECTED -> {
                         _uiState.update {
-                            it.copy(isLocallyConnected = false)
+                            it.copy(isLocallyConnected = false, isBleOnly = false)
                         }
                     }
 
@@ -356,6 +366,7 @@ class AirPodsViewModel(
 
         val filter = IntentFilter().apply {
             addAction(AirPodsNotifications.AIRPODS_CONNECTED)
+            addAction(AirPodsNotifications.AIRPODS_BLE_FALLBACK)
             addAction(AirPodsNotifications.AIRPODS_DISCONNECTED)
             addAction(AirPodsNotifications.BATTERY_DATA)
             addAction(AirPodsNotifications.EQ_DATA)
@@ -463,7 +474,10 @@ class AirPodsViewModel(
         service.let { service ->
             _uiState.update {
                 it.copy(
-                    isLocallyConnected = BluetoothConnectionManager.aacpSocket?.isConnected == true,
+                    isLocallyConnected = BluetoothConnectionManager.aacpSocket?.isConnected == true ||
+                            service.bleFallbackActive,
+                    isBleOnly = BluetoothConnectionManager.aacpSocket?.isConnected != true &&
+                            service.bleFallbackActive,
                     battery = service.getBattery(),
                     ancMode = controlRepo.getValue(ControlCommandIdentifiers.LISTENING_MODE)?.get(0)?.toInt() ?: 1,
                     controlStates = controlRepo.getMap()

@@ -340,4 +340,9 @@
     <string name="troubleshooting_section">Troubleshooting</string>
     <string name="connection_diagnostics">Connection diagnostics</string>
     <string name="connection_diagnostics_description">Check Bluetooth, pairing, permissions and the data channel — tap to run</string>
+
+    <!-- Battery-only fallback mode (PodMate) -->
+    <string name="limited_mode_title">Connected in battery-only mode</string>
+    <string name="limited_mode_note">Your AirPods aren\'t supporting Apple\'s control channel (this is the norm for AirPods bought online / clones, and on phones whose Bluetooth stack needs root). Battery levels, history and popups still work. Listening modes, ear detection and other advanced controls need real AirPods plus a compatible or rooted device.</string>
+    <string name="limited_mode_battery_history_hint">Your battery history is recorded — see Settings → PodMate</string>
 </resources>

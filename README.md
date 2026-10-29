@@ -34,6 +34,17 @@ Every push to `main` is built **automatically on GitHub Actions** and published 
 - 🎚️ **Equalizer presets** — save your custom 3-band EQ as named presets, apply them with one tap,
   and export/import presets as JSON.
 
+### v1.2.1 — battery-only mode for clone AirPods & non-rooted phones
+
+- 🔋 **Battery-only ("limited") mode.** If Apple's control channel can't be established — the
+  normal case with **clone/"fake" AirPods bought online**, and on unrooted phones whose Bluetooth
+  stack needs the root workaround — the app now **falls back to battery-only mode** instead of
+  staying on "not connected" forever: device detected, live battery, battery history, widgets and
+  the connection popup all work using the BLE broadcasts that clones actually do implement.
+  Advanced controls (ANC etc.) are honestly marked as unavailable rather than silently broken.
+- ⚠️ Please note: **"AirPods" bought online are very often clones** that skip most of Apple's
+  proprietary protocol on purpose; software can't make them support ANC control, ear detection etc.
+
 ### v1.2.0 — works on every phone, with or without root
 
 - 🔍 **Reliable connection detection.** The original app only detected AirPods when Android's

@@ -277,6 +277,9 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 caseCharging = caseCharging == true
             )
             updateBattery()
+            if (device.connectionState != "Disconnected") {
+                maybeAnnounceBleFallback()
+            }
         }
 
         override fun onBroadcastFromNewAddress(device: BLEManager.AirPodsStatus) {
@@ -310,6 +313,9 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                     caseCharging = caseCharging == true
                 )
                 sendBatteryBroadcast()
+                if (bleManager.getMostRecentStatus()?.connectionState != "Disconnected") {
+                    maybeAnnounceBleFallback()
+                }
             } else {
                 Log.d(TAG, "Lid closed")
             }
@@ -344,11 +350,15 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 caseCharging = caseCharging == true
             )
             updateBattery()
+            if (device.connectionState != "Disconnected") {
+                maybeAnnounceBleFallback()
+            }
             Log.d(TAG, "Battery changed")
         }
 
         override fun onDeviceDisappeared() {
             Log.d(TAG, "All disappeared")
+            resetBleFallback()
             updateNotificationContent(
                 false
             )
@@ -797,6 +807,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                     aacpManager.disconnected()
                     BluetoothConnectionManager.aacpSocket = null
                     BluetoothConnectionManager.attSocket = null
+                    resetBleFallback()
                 }
             }
         }
@@ -878,6 +889,48 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         CoroutineScope(Dispatchers.IO).launch {
             bleManager.startScanning()
         }
+    }
+
+    /**
+     * Limited ("battery-only") mode for situations where Apple's AAP control
+     * channel over L2CAP can never be established: clone/fake AirPods bought
+     * online that don't implement the protocol, or unrooted phones whose
+     * Bluetooth stack has the FCR bug (many Samsung/other models before
+     * Android 17). The AirPods (including clones) still broadcast status and
+     * battery levels over BLE, which requires no privileges — so instead of
+     * being stuck on "not connected", the app switches to battery-only UX.
+     */
+    @Volatile
+    var bleFallbackActive = false
+        private set
+
+    fun maybeAnnounceBleFallback() {
+        if (BluetoothConnectionManager.aacpSocket?.isConnected == true || bleFallbackActive) return
+        val status = bleManager.getMostRecentStatus() ?: return
+        if (status.connectionState == "Disconnected") return
+        bleFallbackActive = true
+        config.bleOnlyMode = true
+        Log.d(TAG, "L2CAP unavailable — falling back to battery-only (BLE) mode")
+        batteryNotification.setBatteryDirect(
+            leftLevel = status.leftBattery ?: 0,
+            leftCharging = status.isLeftCharging == true,
+            rightLevel = status.rightBattery ?: 0,
+            rightCharging = status.isRightCharging == true,
+            caseLevel = status.caseBattery ?: 0,
+            caseCharging = status.isCaseCharging == true
+        )
+        updateBattery()
+        updateNotificationContent(true, config.deviceName, batteryNotification.getBattery())
+        sendBroadcast(
+            Intent(AirPodsNotifications.AIRPODS_BLE_FALLBACK).apply {
+                setPackage(packageName)
+            }
+        )
+    }
+
+    fun resetBleFallback() {
+        bleFallbackActive = false
+        config.bleOnlyMode = false
     }
 
     @Suppress("unused")
@@ -1455,6 +1508,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 "conversation_awareness_volume", 43
             ),
             qsClickBehavior = sharedPreferences.getString("qs_click_behavior", "cycle") ?: "cycle",
+            bleOnlyMode = sharedPreferences.getBoolean("ble_only_mode", false),
 
             // AirPods state-based takeover
             takeoverWhenDisconnected = sharedPreferences.getBoolean(
@@ -3017,6 +3071,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                         } else {
                             showSocketConnectionFailureNotification("Couldn't connect to socket: ${e.localizedMessage}")
                         }
+                        maybeAnnounceBleFallback()
                         return@withTimeout
 //                            throw e // lol how did i not catch this before... gonna comment this line instead of removing to preserve history
                     }
@@ -3031,6 +3086,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 } else {
                     showSocketConnectionFailureNotification("Couldn't connect to socket: Timeout")
                 }
+                maybeAnnounceBleFallback()
                 return
             }
             this@AirPodsService.device = device

@@ -261,7 +261,7 @@ fun AirPodsSettingsScreen(
         }
     }
 
-    if (state.isLocallyConnected) {
+    if (state.isLocallyConnected && !state.isBleOnly) {
         val capabilities = state.capabilities
 
         LazyColumn(
@@ -607,6 +607,51 @@ fun AirPodsSettingsScreen(
 
 //                item(key = "spacer_debug") { Spacer(modifier = Modifier.height(16.dp)) }
 //                item(key = "debug") { StyledListItem("debug", "Debug", navController) }
+
+            item(key = "bottom_padding") { Spacer(modifier = Modifier.height(bottomPadding)) }
+        }
+    } else if (state.isLocallyConnected) {
+        // Battery-only ("limited") mode — reached on clone/"fake" AirPods that
+        // don't implement Apple's control protocol (or on unrooted phones whose
+        // Bluetooth stack can't open the L2CAP channel). The device is detected
+        // and the battery comes from its BLE broadcasts, without any privileges.
+        LazyColumn(
+            modifier = Modifier
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .padding(horizontal = 16.dp)
+        ) {
+            item(key = "top_padding") { Spacer(modifier = Modifier.height(topPadding)) }
+
+            item(key = "battery") {
+                BatteryView(
+                    batteryList = state.battery,
+                    budsRes = state.instance?.model?.budsRes ?: R.drawable.airpods_pro_2_buds,
+                    caseRes = state.instance?.model?.caseRes ?: R.drawable.airpods_pro_2_case
+                )
+            }
+
+            item(key = "limited_title") {
+                Spacer(modifier = Modifier.height(20.dp))
+                Text(
+                    text = stringResource(R.string.limited_mode_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = stringResource(R.string.limited_mode_note),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 16.dp)
+                )
+            }
+
+            item(key = "limited_battery_history_hint") {
+                StyledListItem(
+                    name = stringResource(R.string.battery_history),
+                    description = stringResource(R.string.limited_mode_battery_history_hint),
+                    onClick = { }
+                )
+            }
 
             item(key = "bottom_padding") { Spacer(modifier = Modifier.height(bottomPadding)) }
         }
