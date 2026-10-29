@@ -8,6 +8,7 @@ import io.github.libxposed.service.XposedService
 import io.github.libxposed.service.XposedServiceHelper
 import me.kavishdevar.librepods.billing.BillingManager
 import me.kavishdevar.librepods.billing.BillingProviderFactory
+import me.kavishdevar.librepods.utils.ShizukuState
 import me.kavishdevar.librepods.utils.XposedServiceHolder
 import me.kavishdevar.librepods.utils.XposedState
 
@@ -16,6 +17,7 @@ class LibrePodsApplication: Application(), XposedServiceHelper.OnServiceListener
     override fun onCreate() {
         XposedServiceHelper.registerListener(this)
         BillingManager.provider = BillingProviderFactory.create(this)
+        ShizukuState.init()
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
 
         super<Application>.onCreate()

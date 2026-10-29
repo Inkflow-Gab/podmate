@@ -18,7 +18,11 @@
 
 package me.kavishdevar.librepods.presentation.screens
 
+import android.Manifest
+import android.bluetooth.BluetoothManager
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -50,9 +54,12 @@ import me.kavishdevar.librepods.presentation.components.StyledList
 import me.kavishdevar.librepods.presentation.components.StyledListItem
 import me.kavishdevar.librepods.utils.AppRelease
 import me.kavishdevar.librepods.utils.SettingsBackup
+import me.kavishdevar.librepods.utils.ShizukuState
+import me.kavishdevar.librepods.utils.XposedState
 
 /**
- * PodMate-specific settings: app updates, battery history, settings backup.
+ * PodMate-specific settings: app updates, battery history, settings backup,
+ * Shizuku helpers and connection diagnostics.
  */
 @Composable
 fun PodmateSettingsSection(
@@ -64,6 +71,15 @@ fun PodmateSettingsSection(
     var updateResult by remember { mutableStateOf<AppRelease.UpdateCheckResult?>(null) }
     var isChecking by remember { mutableStateOf(false) }
     val checkTrigger = remember { mutableIntStateOf(0) }
+
+    // Compose mirrors of the Shizuku state so the UI reacts to grants.
+    val shizukuAvailable = remember { mutableStateOf(ShizukuState.isServerAvailable) }
+    val shizukuGranted = remember { mutableStateOf(ShizukuState.isGranted) }
+    val diagText = remember { mutableStateOf<String?>(null) }
+    val refreshShizuku = {
+        shizukuAvailable.value = ShizukuState.isServerAvailable
+        shizukuGranted.value = ShizukuState.isGranted
+    }
 
     LaunchedEffect(checkTrigger.intValue) {
         isChecking = true
@@ -181,5 +197,177 @@ fun PodmateSettingsSection(
         ) {
             Text(text = stringResource(R.string.download_update))
         }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    StyledList(title = stringResource(R.string.shizuku_section)) {
+        StyledListItem(
+            name = stringResource(R.string.shizuku_access),
+            description = when {
+                !shizukuAvailable.value -> stringResource(R.string.shizuku_not_available)
+                !shizukuGranted.value -> stringResource(R.string.shizuku_tap_to_grant)
+                else -> stringResource(R.string.shizuku_active)
+            },
+            onClick = {
+                refreshShizuku()
+                when {
+                    !ShizukuState.isServerAvailable -> {
+                        val launch =
+                            context.packageManager.getLaunchIntentForPackage(ShizukuState.SHIZUKU_PACKAGE)
+                        if (launch != null) {
+                            context.startActivity(launch)
+                        } else {
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.shizuku_install_hint),
+                                Toast.LENGTH_LONG
+                            ).show()
+                            context.startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    "https://shizuku.rikka.app/download/".toUri()
+                                )
+                            )
+                        }
+                    }
+
+                    !ShizukuState.isGranted -> ShizukuState.requestPermission()
+                    else -> Toast.makeText(
+                        context,
+                        context.getString(R.string.shizuku_already_granted),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        )
+
+        StyledListItem(
+            name = stringResource(R.string.shizuku_grant_permissions),
+            description = stringResource(R.string.shizuku_grant_permissions_description),
+            onClick = {
+                scope.launch(Dispatchers.IO) {
+                    val pkg = context.packageName
+                    val grantedConnect = ShizukuState.grantRuntimePermission(
+                        pkg, "android.permission.BLUETOOTH_CONNECT"
+                    )
+                    val grantedNotifications = ShizukuState.grantRuntimePermission(
+                        pkg, Manifest.permission.POST_NOTIFICATIONS
+                    )
+                    withContext(Dispatchers.Main) {
+                        refreshShizuku()
+                        Toast.makeText(
+                            context,
+                            when {
+                                !ShizukuState.isGranted ->
+                                    context.getString(R.string.shizuku_not_granted_yet)
+                                grantedConnect && grantedNotifications ->
+                                    context.getString(R.string.shizuku_permissions_granted)
+                                else ->
+                                    context.getString(R.string.shizuku_permissions_partial)
+                            },
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        )
+
+        StyledListItem(
+            name = stringResource(R.string.shizuku_enable_popup),
+            description = stringResource(R.string.shizuku_enable_popup_description),
+            onClick = {
+                scope.launch(Dispatchers.IO) {
+                    val ok = ShizukuState.allowSystemAlertWindow(context.packageName)
+                    withContext(Dispatchers.Main) {
+                        refreshShizuku()
+                        Toast.makeText(
+                            context,
+                            if (ok) context.getString(R.string.shizuku_popup_enabled)
+                            else context.getString(R.string.shizuku_grant_failed),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
+        )
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    StyledList(title = stringResource(R.string.troubleshooting_section)) {
+        StyledListItem(
+            name = stringResource(R.string.connection_diagnostics),
+            description = diagText.value
+                ?: stringResource(R.string.connection_diagnostics_description),
+            onClick = {
+                refreshShizuku()
+                diagText.value = collectConnectionDiagnostics(context)
+            }
+        )
+    }
+}
+
+/**
+ * Builds a human-readable summary of everything that matters for
+ * detecting AirPods and talking to them — useful when "the app
+ * doesn't detect" on a specific phone.
+ */
+private fun collectConnectionDiagnostics(context: Context): String {
+    try {
+        val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        val lines = mutableListOf<String>()
+
+        val bluetoothManager =
+            context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        val adapter = bluetoothManager?.adapter
+        lines += when {
+            adapter == null -> "Bluetooth: not available"
+            adapter.isEnabled -> "Bluetooth: on"
+            else -> "Bluetooth: off — turn it on"
+        }
+
+        val connectPermission =
+            context.checkSelfPermission("android.permission.BLUETOOTH_CONNECT")
+        val hasConnect = connectPermission == PackageManager.PERMISSION_GRANTED
+        lines += if (hasConnect) {
+            "Nearby connect permission: granted"
+        } else {
+            "Nearby connect permission: missing → open the app's onboarding"
+        }
+
+        val savedMac = prefs.getString("mac_address", "") ?: ""
+        val bondedAirPods = if (hasConnect) {
+            try {
+                adapter?.bondedDevices?.any { device ->
+                    device.name.contains("airpods", ignoreCase = true) ||
+                            device.address.equals(savedMac, ignoreCase = true)
+                } ?: false
+            } catch (e: Exception) {
+                false
+            }
+        } else false
+        lines += if (bondedAirPods) {
+            "AirPods bonded: yes"
+        } else {
+            "AirPods bonded: no/unknown → triple-press the case lid, connect in Settings, then reopen PodMate"
+        }
+
+        val channelOk = prefs.getBoolean("connection_successful", false)
+        lines += if (channelOk) {
+            "Data channel: worked before — reconnect AirPods to refresh"
+        } else {
+            "Data channel: not established yet — ANC/battery may need root/Xposed on this Android"
+        }
+
+        lines += when {
+            XposedState.isAvailable -> "Privileges: Xposed hook active"
+            ShizukuState.isGranted -> "Privileges: Shizuku connected"
+            else -> "Privileges: none (Shizuku optional, root optional)"
+        }
+
+        return lines.joinToString("\n")
+    } catch (e: Exception) {
+        return "Diagnostics failed: ${e.message}"
     }
 }

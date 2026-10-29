@@ -317,4 +317,27 @@
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>
     <string name="delete">Delete</string>
+
+    <!-- Shizuku integration (PodMate) -->
+    <string name="shizuku_section">Extended Bluetooth access</string>
+    <string name="shizuku_access">Shizuku</string>
+    <string name="shizuku_not_available">Shizuku not running — install and start it, then come back</string>
+    <string name="shizuku_tap_to_grant">Tap to let PodMate use Shizuku</string>
+    <string name="shizuku_active">Connected — privileged helpers available</string>
+    <string name="shizuku_install_hint">Shizuku isn\'t installed. Get it from shizuku.rikka.app or GitHub.</string>
+    <string name="shizuku_already_granted">Shizuku access already granted</string>
+    <string name="shizuku_grant_permissions">Grant Bluetooth permissions with Shizuku</string>
+    <string name="shizuku_grant_permissions_description">If the Nearby/connect dialogs misbehave on your phone, grant them through Shizuku</string>
+    <string name="shizuku_not_granted_yet">First approve PodMate in the Shizuku dialog</string>
+    <string name="shizuku_permissions_granted">Permissions granted with Shizuku</string>
+    <string name="shizuku_permissions_partial">Some permissions could not be granted</string>
+    <string name="shizuku_enable_popup">Allow connection popup over other apps</string>
+    <string name="shizuku_enable_popup_description">Enables the overlay permission (appops) so people can see AirPods popups anywhere</string>
+    <string name="shizuku_popup_enabled">Overlay permission enabled</string>
+    <string name="shizuku_grant_failed">Could not run the command — approve PodMate in Shizuku first</string>
+
+    <!-- Troubleshooting (PodMate) -->
+    <string name="troubleshooting_section">Troubleshooting</string>
+    <string name="connection_diagnostics">Connection diagnostics</string>
+    <string name="connection_diagnostics_description">Check Bluetooth, pairing, permissions and the data channel — tap to run</string>
 </resources>

@@ -34,6 +34,30 @@ Every push to `main` is built **automatically on GitHub Actions** and published 
 - 🎚️ **Equalizer presets** — save your custom 3-band EQ as named presets, apply them with one tap,
   and export/import presets as JSON.
 
+### v1.2.0 — works on every phone, with or without root
+
+- 🔍 **Reliable connection detection.** The original app only detected AirPods when Android's
+  Bluetooth SDP cache already contained AirPods' UUID at connect time — which often isn't the
+  case on many phones, so the app "didn't detect anything" without Xposed. Detection now also
+  uses device-name recognition ("AirPods" contains-check), previously-seen MAC addresses, the
+  follow-up UUID broadcast after SDP refresh, and the A2DP/HEADSET profile connection broadcasts
+  (the most reliable signal on every Android version). Disconnects are detected the same way,
+  so the UI no longer gets stuck in "connected" state on phones without the Xposed hook.
+- 🐫 **Shizuku support** — *Settings → PodMate → Extended Bluetooth access*. If you don't have
+  root but have [Shizuku](https://shizuku.rikka.app) running, PodMate can:
+  - read the local Bluetooth MAC without root (needed for some features),
+  - grant the Nearby-connect / Notifications permissions via `pm grant` when system dialogs
+    misbehave on some OEM ROMs,
+  - enable the screen-overlay permission through `appops` so the AirPods popup can show over
+    other apps.
+- 🩺 **Connection diagnostics** — *Settings → PodMate → Troubleshooting* shows exactly what the
+  app can see: Bluetooth on/off, whether AirPods are bonded, permission state, whether the
+  data channel has ever worked, and which privilege path (Xposed / Shizuku / none) is active.
+- Works **fully without root** wherever the Android Bluetooth stack already cooperates
+  (Pixel on Android 16 QPR3+, ColorOS/OxygenOS 16, realme UI 7 — see the upstream readme).
+  On phones where the stack bug applies, detection + battery + popups now work without root,
+  while ANC/advanced control still needs the known workarounds (root + Xposed, or Android 17).
+
 ## Root / Xposed requirement
 
 Same as upstream LibrePods: depending on your device and Android version, root + Xposed
