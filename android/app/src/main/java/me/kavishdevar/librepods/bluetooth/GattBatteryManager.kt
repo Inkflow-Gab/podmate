@@ -157,7 +157,7 @@ class GattBatteryManager(
             } catch (_: Exception) {
                 null
             }
-            if (status == BluetoothGatt.GATT_SUCCESS && !value.isNullOrEmpty()) {
+            if (status == BluetoothGatt.GATT_SUCCESS && value != null && value.isNotEmpty()) {
                 report(value[0].toInt() and 0xFF)
             }
         }
@@ -171,7 +171,7 @@ class GattBatteryManager(
             } catch (_: Exception) {
                 null
             }
-            if (!value.isNullOrEmpty()) {
+            if (value != null && value.isNotEmpty()) {
                 report(value[0].toInt() and 0xFF)
             }
         }
