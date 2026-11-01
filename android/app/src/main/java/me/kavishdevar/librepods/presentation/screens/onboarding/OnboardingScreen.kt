@@ -52,7 +52,11 @@ fun OnboardingScreen(
     onOnboardingComplete: () -> Unit,
 ) {
     val sharedPreferences = LocalContext.current.getSharedPreferences("settings", Context.MODE_PRIVATE)
-    val isSupported = isSupported(sharedPreferences) || XposedState.bluetoothScopeEnabled
+    // PodMate never blocks onboarding on device support. Without root the app
+    // still detects the earbuds and runs in limited (battery-only) mode, which
+    // is genuinely useful — no "not supported" wall, no bypass checkbox, no
+    // typing OK just to get into the app.
+    val isSupported = true
 
     val state = rememberCarouselState(
         initialItem = 0,

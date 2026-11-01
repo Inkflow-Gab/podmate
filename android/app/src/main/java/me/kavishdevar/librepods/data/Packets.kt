@@ -74,7 +74,14 @@ enum class NoiseControlMode {
 class AirPodsNotifications {
     companion object {
         const val AIRPODS_CONNECTED = "me.kavishdevar.librepods.AIRPODS_CONNECTED"
-        const val AIRPODS_L2CAP_CONNECTED = "me.kavishdevar.librepods.AIRPODS_CONNECTED"
+
+        /**
+         * Apple's control channel is actually up (handshake sent, data flows).
+         * This used to be the *same* string as [AIRPODS_CONNECTED], so every
+         * "device connected" broadcast was mistaken for "full control mode"
+         * and the battery-only UI never appeared. Keep them distinct.
+         */
+        const val AIRPODS_L2CAP_CONNECTED = "me.kavishdevar.librepods.AIRPODS_L2CAP_CONNECTED"
         const val AIRPODS_DATA = "me.kavishdevar.librepods.AIRPODS_DATA"
         const val EAR_DETECTION_DATA = "me.kavishdevar.librepods.EAR_DETECTION_DATA"
         const val ANC_DATA = "me.kavishdevar.librepods.ANC_DATA"

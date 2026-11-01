@@ -90,6 +90,7 @@ import me.kavishdevar.librepods.bluetooth.ATTHandles
 import me.kavishdevar.librepods.bluetooth.ATTManagerv2
 import me.kavishdevar.librepods.bluetooth.BLEManager
 import me.kavishdevar.librepods.bluetooth.BluetoothConnectionManager
+import me.kavishdevar.librepods.bluetooth.L2capConnector
 import me.kavishdevar.librepods.bluetooth.createBluetoothSocket
 import me.kavishdevar.librepods.data.BatteryHistoryStore
 import me.kavishdevar.librepods.data.AirPodsInstance
@@ -108,8 +109,10 @@ import me.kavishdevar.librepods.presentation.overlays.IslandWindow
 import me.kavishdevar.librepods.presentation.overlays.PopupWindow
 import me.kavishdevar.librepods.presentation.widgets.BatteryWidget
 import me.kavishdevar.librepods.presentation.widgets.NoiseControlWidget
+import me.kavishdevar.librepods.utils.EarbudDetection
 import me.kavishdevar.librepods.utils.GestureDetector
 import me.kavishdevar.librepods.utils.HeadTracking
+import me.kavishdevar.librepods.utils.LocalMacResolver
 import me.kavishdevar.librepods.utils.MediaController
 import me.kavishdevar.librepods.utils.ShizukuState
 import me.kavishdevar.librepods.utils.SystemApisUtils
@@ -376,28 +379,6 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         }
     }
 
-    /** Local Bluetooth MAC via `su` (root only). Prefers Shizuku, which is called first. */
-    @SuppressLint("HardwareIds")
-    private fun queryBluetoothAddressWithRoot(): String {
-        return try {
-            val process = Runtime.getRuntime().exec(
-                arrayOf("su", "-c", "settings get secure bluetooth_address")
-            )
-            val exitCode = process.waitFor()
-            if (exitCode == 0) {
-                process.inputStream.bufferedReader().use { it.readLine()?.trim().orEmpty() }
-            } else {
-                ""
-            }
-        } catch (e: Exception) {
-            Log.e(
-                TAG,
-                "Error retrieving local MAC address: ${e.message}. We probably aren't rooted either."
-            )
-            ""
-        }
-    }
-
     /**
      * If a bonded AirPods-like device is already connected when the service
      * comes up, resumes the AACP/L2CAP session without waiting for a new
@@ -432,6 +413,10 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                             )
                             CoroutineScope(Dispatchers.IO).launch {
                                 connectToSocket(adapter, device)
+                                delay(7000)
+                                if (BluetoothConnectionManager.aacpSocket?.isConnected != true) {
+                                    this@AirPodsService.maybeAnnounceBleFallback(device)
+                                }
                             }
                             setMetadatas(device)
                             macAddress = device.address
@@ -469,16 +454,22 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             device.uuids?.contains(
                 ParcelUuid.fromString("74ec2172-0bad-4d01-8f77-997b2be0722a")
             ) == true ||
-                    (
-                        !device.name.isNullOrEmpty() &&
-                                device.name!!.contains("airpods", ignoreCase = true)
-                        ) ||
+                    EarbudDetection.nameLooksLikeAirPods(device.name) ||
                     (
                         savedMac.isNotEmpty() &&
                                 device.address.equals(savedMac, ignoreCase = true)
-                        )
+                        ) ||
+                    EarbudDetection.genericModeEnabled(sharedPreferences)
         } catch (e: SecurityException) {
-            false
+            // Without the Nearby-connect permission we can still act on the
+            // saved MAC or on the user's "treat any earbuds as AirPods" switch.
+            EarbudDetection.genericModeEnabled(sharedPreferences) ||
+                    (
+                        savedMac.isNotEmpty() &&
+                                runCatching { device.address }
+                                    .getOrNull()
+                                    ?.equals(savedMac, ignoreCase = true) == true
+                        )
         }
     }
 
@@ -506,26 +497,20 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         sharedPreferences.registerOnSharedPreferenceChangeListener(this)
 
         localMac = config.selfMacAddress
-        if (localMac.isEmpty()) {
-            if (checkSelfPermission("android.permission.LOCAL_MAC_ADDRESS") == PackageManager.PERMISSION_GRANTED) {
-                val bluetoothManager = getSystemService(BluetoothManager::class.java)
-                val bluetoothAdapter = bluetoothManager.adapter
-                localMac = bluetoothAdapter.address
-            } else {
-                // Prefer Shizuku (works without root when the user has it set up);
-                // fall back to root only.  Also handles "null"/empty outputs.
-                localMac = try {
-                    ShizukuState.readSecureSetting("bluetooth_address")
-                        ?: queryBluetoothAddressWithRoot()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error retrieving local MAC address: ${e.message}")
-                    queryBluetoothAddressWithRoot()
-                }
-            }
+        if (!LocalMacResolver.isValidMac(localMac)) {
+            // Rootless MAC resolution (cached value → privileged permission →
+            // Shizuku → reflection → Settings.Secure → bt-pan). No `su`, ever:
+            // asking for root on connect is exactly what broke the experience
+            // on a stock phone. An empty result is fine, the few Apple packets
+            // that need it are skipped.
+            localMac = LocalMacResolver.resolve(this, sharedPreferences)
             config.selfMacAddress = localMac
             sharedPreferences.edit {
                 putString("self_mac_address", localMac)
             }
+        }
+        if (localMac.isEmpty()) {
+            Log.d(TAG, "Local MAC address unknown — continuing rootless without it")
         }
 
         ServiceManager.setService(this)
@@ -787,9 +772,18 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 //                    Log.d("AirPodsCrossDevice", CrossDevice.isAvailable.toString())
 //                    if (!CrossDevice.isAvailable) {
                     Log.d(TAG, "${config.deviceName} connected")
+                    val connectedDevice = device
                     CoroutineScope(Dispatchers.IO).launch {
                         val bluetoothManager = getSystemService(BluetoothManager::class.java)
                         connectToSocket(bluetoothManager.adapter, device!!)
+                        // Safety net for every phone, rootless or not: if the
+                        // Apple control channel still isn't up a few seconds
+                        // after the earbuds connected, switch to limited mode so
+                        // the user gets battery/popups instead of "not connected".
+                        delay(7000)
+                        if (BluetoothConnectionManager.aacpSocket?.isConnected != true) {
+                            this@AirPodsService.maybeAnnounceBleFallback(connectedDevice)
+                        }
                     }
                     Log.d(TAG, "Setting metadata")
                     setMetadatas(device!!)
@@ -893,13 +887,18 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     }
 
     /**
-     * Limited ("battery-only") mode for situations where Apple's AAP control
-     * channel over L2CAP can never be established: clone/fake AirPods bought
-     * online that don't implement the protocol, or unrooted phones whose
-     * Bluetooth stack has the FCR bug (many Samsung/other models before
-     * Android 17). The AirPods (including clones) still broadcast status and
-     * battery levels over BLE, which requires no privileges — so instead of
-     * being stuck on "not connected", the app switches to battery-only UX.
+     * Limited ("companion") mode: what PodMate does when Apple's AAP control
+     * channel over L2CAP cannot be established — clone/"fake" AirPods bought
+     * online that don't implement the protocol, real AirPods on a phone whose
+     * Bluetooth stack rejects the channel, or any setup without root.
+     *
+     * Nothing here needs root, Magisk, LSPosed or Shizuku: device detection
+     * comes from Android's own A2DP/HEADSET/ACL broadcasts, and the battery
+     * comes from the standard Bluetooth Battery Service (0x180F) plus Apple's
+     * BLE status advertisements when the earbuds send them. So even a pair of
+     * cheap TWS buds behaves like AirPods for battery, popups, notifications
+     * and history — and the advanced Apple controls are honestly reported as
+     * unavailable instead of silently failing.
      */
     @Volatile
     var bleFallbackActive = false
@@ -907,13 +906,55 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
     private var gattBatteryManager: GattBatteryManager? = null
 
-    fun maybeAnnounceBleFallback() {
-        if (BluetoothConnectionManager.aacpSocket?.isConnected == true || bleFallbackActive) return
+    /**
+     * Enters limited mode if the full control channel is not usable.
+     *
+     * [deviceHint] is the Bluetooth device that just connected. Passing it is
+     * important: it makes the fallback work for earbuds that never broadcast
+     * Apple's BLE status message at all (where the BLE status map is empty and
+     * the old implementation gave up and left the UI on "not connected").
+     */
+    fun maybeAnnounceBleFallback(deviceHint: BluetoothDevice? = null) {
+        if (BluetoothConnectionManager.aacpSocket?.isConnected == true) return
+        if (bleFallbackActive) return
         val status = bleManager.getMostRecentStatus()
-        if (status?.connectionState == "Disconnected") return
+        val hint = deviceHint ?: device
+        // With neither a BLE advertisement nor a connected device there is
+        // nothing to show yet.
+        if (status == null && hint == null) return
+        if (status != null && status.connectionState == "Disconnected" && hint == null) return
+        enterLimitedMode(hint, status)
+    }
+
+    private fun enterLimitedMode(hint: BluetoothDevice?, status: BLEManager.AirPodsStatus?) {
         bleFallbackActive = true
         config.bleOnlyMode = true
-        Log.d(TAG, "L2CAP unavailable — falling back to battery-only (BLE) mode")
+        // Remembered only for the diagnostics screen (not a behaviour switch).
+        sharedPreferences.edit { putBoolean("last_mode_limited", true) }
+        Log.d(TAG, "Control channel unavailable — entering limited (rootless) mode")
+
+        val name = try {
+            hint?.name
+        } catch (e: SecurityException) {
+            null
+        } ?: status?.model
+        if (!name.isNullOrEmpty() && name != "Unknown") {
+            config.deviceName = name
+            sharedPreferences.edit { putString("name", name) }
+        }
+        if (hint != null) {
+            val address = try {
+                hint.address
+            } catch (e: SecurityException) {
+                null
+            }
+            if (!address.isNullOrEmpty()) {
+                macAddress = address
+                sharedPreferences.edit { putString("mac_address", address) }
+            }
+            this.device = hint
+        }
+
         if (status != null) {
             batteryNotification.setBatteryDirect(
                 leftLevel = status.leftBattery ?: 0,
@@ -924,45 +965,59 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 caseCharging = status.isCaseCharging == true
             )
         }
-        updateBattery()
         updateNotificationContent(true, config.deviceName, batteryNotification.getBattery())
+        updateBattery()
         sendBroadcast(
             Intent(AirPodsNotifications.AIRPODS_BLE_FALLBACK).apply {
                 setPackage(packageName)
             }
         )
-        // Belt & braces for clones that never broadcast Apple's status message:
-        // subscribe to the standard GATT Battery Service (no privileges needed).
-        startGattBatteryReader()
+        // Battery for earbuds that never send Apple's BLE status message:
+        // the standard GATT Battery Service, exactly what Android's own quick
+        // settings uses. Needs only the Nearby-connect permission.
+        startGattBatteryReader(hint)
+
+        // Clones/non-Apple buds usually never announce a lid-open event, so
+        // show the same battery popup when they connect instead.
+        try {
+            showPopup(this, config.deviceName)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not show the connection popup: ${e.message}")
+        }
     }
 
     /**
      * Reads battery from the earbuds' standard GATT Battery Service (0x180F).
-     * Many clone AirPods expose it — it's how Android's own quick settings gets
-     * their battery. Works with only the Nearby-connect permission, no root.
+     * Many clone AirPods (and plenty of non-Apple TWS buds) expose it — it's how
+     * Android's own quick settings gets their battery. No root needed.
      */
     @SuppressLint("MissingPermission")
-    private fun startGattBatteryReader() {
+    private fun startGattBatteryReader(deviceHint: BluetoothDevice? = null) {
         if (gattBatteryManager != null) return
         if (checkSelfPermission("android.permission.BLUETOOTH_CONNECT") != PackageManager.PERMISSION_GRANTED) {
             return
         }
-        val address = macAddress.ifEmpty {
-            sharedPreferences.getString("mac_address", "") ?: ""
-        }
-        if (address.isEmpty()) return
-        val adapter = getSystemService(BluetoothManager::class.java).adapter ?: return
-        val device = try {
-            adapter.getRemoteDevice(address)
-        } catch (e: Exception) {
-            Log.w(TAG, "Invalid saved MAC for GATT battery reader: $address")
-            return
+        val target = deviceHint ?: run {
+            val address = macAddress.ifEmpty {
+                sharedPreferences.getString("mac_address", "") ?: ""
+            }
+            if (address.isEmpty()) return
+            val adapter = getSystemService(BluetoothManager::class.java).adapter ?: return
+            try {
+                adapter.getRemoteDevice(address)
+            } catch (e: Exception) {
+                Log.w(TAG, "Invalid saved MAC for GATT battery reader: $address")
+                return
+            }
         }
         gattBatteryManager = GattBatteryManager(this) { level ->
             Log.d(TAG, "GATT battery level: $level")
-            batteryNotification.setGattBattery(level)
-            updateBattery()
-        }.also { it.connect(device) }
+            // The AAP channel reports per-bud levels; don't overwrite it.
+            if (BluetoothConnectionManager.aacpSocket?.isConnected != true) {
+                batteryNotification.setGattBattery(level)
+                updateBattery()
+            }
+        }.also { it.connect(target) }
     }
 
     private fun stopGattBatteryReader() {
@@ -973,7 +1028,38 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     fun resetBleFallback() {
         bleFallbackActive = false
         config.bleOnlyMode = false
+        sharedPreferences.edit { putBoolean("last_mode_limited", false) }
         stopGattBatteryReader()
+    }
+
+    /**
+     * User-initiated retry of the full Apple control channel from limited mode
+     * (e.g. after re-pairing, toggling Bluetooth, or installing the Xposed hook).
+     * Rootless: it simply re-runs the same L2CAP attempts.
+     */
+    @SuppressLint("MissingPermission")
+    fun retryControlChannel() {
+        val adapter = getSystemService(BluetoothManager::class.java).adapter ?: return
+        val address = macAddress.ifEmpty {
+            sharedPreferences.getString("mac_address", "") ?: ""
+        }
+        val target = device ?: try {
+            if (address.isEmpty()) null else adapter.getRemoteDevice(address)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not resolve saved MAC $address: ${e.message}")
+            null
+        }
+        if (target == null) {
+            Log.w(TAG, "Retry requested but no saved earbuds to connect to")
+            return
+        }
+        Log.d(TAG, "Retrying control channel to ${target.address}")
+        L2capConnector.closeQuietly(BluetoothConnectionManager.aacpSocket)
+        BluetoothConnectionManager.aacpSocket = null
+        resetBleFallback()
+        CoroutineScope(Dispatchers.IO).launch {
+            connectToSocket(adapter, target, manual = true)
+        }
     }
 
     @Suppress("unused")
@@ -1277,7 +1363,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                     "Stem press received: $stemPressType on $bud, cameraActive: $cameraActive, cameraAction: ${config.cameraAction}"
                 )
                 if (cameraActive && config.cameraAction != null && stemPressType == config.cameraAction) {
-                        Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 27"))
+                    triggerCameraShutter()
                 } else {
                     val action = getActionFor(bud, stemPressType)
                     Log.d("AirPodsParser", "$bud $stemPressType action: $action")
@@ -1997,6 +2083,33 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         notificationManager.notify(3, notification)
     }
 
+    /**
+     * Presses the camera shutter (KEYCODE_CAMERA) when a stem press is mapped
+     * to the camera action. Rootless path: Shizuku runs `input keyevent 27` as
+     * the shell user, which is allowed to inject keys. Only if the user has
+     * explicitly opted in to root helpers do we ever fall back to `su` —
+     * otherwise a stock phone would get a root prompt for a photo.
+     */
+    private fun triggerCameraShutter() {
+        val shizukuResult = if (ShizukuState.isGranted) {
+            ShizukuState.runCommand(arrayOf("input", "keyevent", "27"))
+        } else null
+        if (shizukuResult != null && shizukuResult.exitCode == 0) {
+            Log.d(TAG, "Camera shutter pressed through Shizuku")
+            return
+        }
+        if (sharedPreferences.getBoolean("allow_root_helpers", false)) {
+            try {
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 27"))
+                Log.d(TAG, "Camera shutter pressed through su (root helpers enabled)")
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "su unavailable for camera shutter: ${e.message}")
+            }
+        }
+        sendToast("Open PodMate settings to enable camera shutter (needs Shizuku)")
+    }
+
     fun sendANCBroadcast() {
         sendBroadcast(Intent(AirPodsNotifications.ANC_DATA).apply {
             putExtra("data", ancNotification.status)
@@ -2596,19 +2709,23 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         private const val PENDING_TTL_MS = 10 * 60 * 1000L
 
         @SuppressLint("MissingPermission")
-        private fun isAirPodsLike(device: BluetoothDevice?): Boolean {
+        private fun isAirPodsLike(
+            device: BluetoothDevice?,
+            prefs: SharedPreferences? = null
+        ): Boolean {
             if (device?.address == null) return false
             try {
                 if (device.uuids?.contains(AIRPODS_UUID) == true) return true
             } catch (_: SecurityException) {
             }
             try {
-                if (!device.name.isNullOrEmpty() && device.name!!.contains("airpods", ignoreCase = true)) {
+                if (EarbudDetection.nameLooksLikeAirPods(device.name)) {
                     return true
                 }
             } catch (_: SecurityException) {
             }
-            return false
+            // "Treat any Bluetooth earbuds as AirPods" (Settings → PodMate).
+            return EarbudDetection.genericModeEnabled(prefs)
         }
 
         @SuppressLint("MissingPermission")
@@ -2706,8 +2823,8 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                         } catch (_: SecurityException) {
                             null
                         }
-                        val nameMatch = !deviceName.isNullOrEmpty() &&
-                                deviceName.contains("airpods", ignoreCase = true)
+                        val nameMatch = EarbudDetection.nameLooksLikeAirPods(deviceName) ||
+                                EarbudDetection.genericModeEnabled(prefs)
                         val macMatch = isSavedMac(device, prefs)
                         if (uuidMatch == true || nameMatch || macMatch) {
                             fireConnectionDetected(
@@ -2780,7 +2897,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                                 // Only accept the first profile connection per ACL; the
                                 // second one (headset after a2dp) is redundant noise.
                                 if (!firstProfileConnection) {
-                                    if (isAirPodsLike(device) || isSavedMac(device, prefs)) {
+                                    if (isAirPodsLike(device, prefs) || isSavedMac(device, prefs)) {
                                         fireConnectionDetected(
                                             appContext, device,
                                             storedName?.takeIf { it.isNotEmpty() } ?: deviceName
@@ -2791,7 +2908,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                                 }
                             }
                             BluetoothProfile.STATE_DISCONNECTED -> {
-                                val isCandidate = isAirPodsLike(device) || isSavedMac(device, prefs) ||
+                                val isCandidate = isAirPodsLike(device, prefs) || isSavedMac(device, prefs) ||
                                         synchronized(recentConnections) { recentConnections.containsKey(address) }
                                 if (isCandidate) {
                                     val anyOtherProfile = synchronized(connectedProfiles) {
@@ -2805,7 +2922,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
                     BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
                         Log.d(TAG, "ACL disconnected for ${device.address}")
-                        val isCandidate = isAirPodsLike(device) || isSavedMac(device, prefs) ||
+                        val isCandidate = isAirPodsLike(device, prefs) || isSavedMac(device, prefs) ||
                                 synchronized(recentConnections) { recentConnections.containsKey(device.address) }
                         if (isCandidate) {
                             val anyOtherProfile = synchronized(connectedProfiles) {
@@ -3031,13 +3148,16 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     ) {
         if (BluetoothConnectionManager.aacpSocket != null && BluetoothConnectionManager.aacpSocket?.isConnected == true) return
         Log.d(TAG, "<LogCollector:Start> Connecting to socket")
-        val uuid: ParcelUuid = ParcelUuid.fromString("74ec2172-0bad-4d01-8f77-997b2be0722a")
 //        if (!isConnectedLocally) {
+        // Rootless: this creates AND connects the channel, retrying a few times
+        // and never blocking forever (see L2capConnector). No root, no Xposed.
         val socket = try {
-            createBluetoothSocket(adapter, device, uuid, 4097)
+            L2capConnector.openControlChannel(adapter, device)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to create BluetoothSocket: ${e.message}")
-            showSocketConnectionFailureNotification("Failed to create Bluetooth socket: ${e.localizedMessage}")
+            Log.e(TAG, "Failed to open the control channel: ${e.message}")
+            showSocketConnectionFailureNotification("Failed to open L2CAP channel: ${e.localizedMessage}")
+            Log.d(TAG, "<LogCollector:Complete:Failed> Control channel unavailable: ${L2capConnector.diagnosis()}")
+            maybeAnnounceBleFallback(device)
             return
         }
 
@@ -3045,7 +3165,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             runBlocking {
                 withTimeout(5000.milliseconds) {
                     try {
-                        socket.connect()
+                        // Already connected by L2capConnector above.
                         this@AirPodsService.device = device
                         val xposedRemotePref = XposedRemotePrefProvider.create()
                         val attSocket = if (xposedRemotePref.getBoolean("vendor_id_hook", false)) {
@@ -3118,7 +3238,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                         } else {
                             showSocketConnectionFailureNotification("Couldn't connect to socket: ${e.localizedMessage}")
                         }
-                        maybeAnnounceBleFallback()
+                        maybeAnnounceBleFallback(device)
                         return@withTimeout
 //                            throw e // lol how did i not catch this before... gonna comment this line instead of removing to preserve history
                     }
@@ -3133,7 +3253,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 } else {
                     showSocketConnectionFailureNotification("Couldn't connect to socket: Timeout")
                 }
-                maybeAnnounceBleFallback()
+                maybeAnnounceBleFallback(device)
                 return
             }
             this@AirPodsService.device = device

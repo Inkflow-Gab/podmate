@@ -105,8 +105,10 @@ jobs:
           path: dist/*.apk
           if-no-files-found: error
 
-      - name: Create or update GitHub release (pushes to main)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Create or update GitHub release (pushes to main, or manual run)
+        # Manual runs (workflow_dispatch) are handy to publish an APK from a
+        # branch before it lands on main; pushes only publish from main.
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: v${{ steps.version.outputs.version_name }}

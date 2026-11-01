@@ -24,6 +24,45 @@ Every push to `main` is built **automatically on GitHub Actions** and published 
 
 ## New in this fork
 
+### v1.3.0 — no root, ever (works with normal & clone AirPods)
+
+- 🚫 **Root is gone from the normal flow.** PodMate used to shell out to
+  `su -c "settings get secure bluetooth_address"`, which popped a root prompt the
+  moment AirPods connected (and did nothing on a phone without root). The local
+  Bluetooth address is now resolved rootlessly (cached value → privileged
+  permission → Shizuku → reflection → `Settings.Secure` → `bt-pan` interface),
+  and if it can't be read the few packets that need it are simply skipped.
+- 🔌 **Better rootless connection attempts.** The Apple control channel is opened
+  with up to 3 timed attempts instead of one 5-second blocking `connect()`, so a
+  channel that is busy right after pairing now succeeds, and a hanging attempt
+  can never freeze the app. Every failure reason is recorded for
+  *Settings → PodMate → Connection diagnostics*.
+- 🔋 **Limited mode now actually engages.** It used to require an Apple BLE
+  advertisement *and* a live status packet; earbuds that advertise nothing
+  (most clones) left the app on "not connected" forever. Limited mode is now
+  triggered by the normal A2DP/HEADSET connection (with a 7-second safety net
+  after the control channel fails) and reads battery from the standard GATT
+  Battery Service — no root, no Magisk, no LSPosed, no Shizuku.
+- 🎛️ **Limited mode is a real screen now:** live battery, media controls
+  (previous / play-pause / next), working battery-history link, "try the full
+  AirPods connection again" button and a shortcut to Bluetooth settings.
+- 🎧 **Non-Apple earbuds.** Detection recognises more names (AirPods, AirPods
+  clones, "…Pods", TWS-style names) and there is a *Compatibility → Treat any
+  earbuds as AirPods* switch for everything else, so battery, popups, widgets
+  and history work for ordinary Bluetooth earbuds too.
+- 🐞 **Fixed the "full mode vs limited mode" mix-up.** `AIRPODS_CONNECTED` and
+  `AIRPODS_L2CAP_CONNECTED` were the *same* broadcast string, so any connection
+  was treated as "full control mode" and the battery-only UI never appeared.
+  They are distinct now.
+- 🔓 **Onboarding no longer blocks you.** No "device not supported" wall and no
+  typing `OK` to bypass it — a phone without the Xposed hook simply starts in
+  limited mode.
+- 📷 **Camera shutter without root:** it goes through Shizuku (`input keyevent
+  27`) first; `su` is only used if you explicitly enable *Allow root helpers*.
+
+The old root module, LSPosed hook and VendorID extras still exist for people who
+want the last few Apple-only features — but nothing in the normal flow needs them.
+
 - 🌗 **New app icon** (fresh PodMate branding).
 - ⬆️ **In-app update checker** — *Settings → PodMate → App updates* tells you when a newer release
   is published on GitHub and links straight to the APK.
@@ -80,12 +119,32 @@ Every push to `main` is built **automatically on GitHub Actions** and published 
   On phones where the stack bug applies, detection + battery + popups now work without root,
   while ANC/advanced control still needs the known workarounds (root + Xposed, or Android 17).
 
-## Root / Xposed requirement
+## Root / Xposed — optional, never required
 
-Same as upstream LibrePods: depending on your device and Android version, root + Xposed
-(LSPosed) is needed to hook the Bluetooth stack. See the
-[upstream readme](https://github.com/kavishdevar/librepods#readme) for the details on which
-devices do/don't need it.
+**PodMate does not need root to run.** Install the APK, grant the Nearby-devices permission,
+connect your earbuds, done.
+
+What you get with **no root at all**:
+
+- automatic detection of the earbuds (real AirPods, clones and, with the compatibility switch,
+  any Bluetooth earbuds),
+- battery level per bud/case from Apple's BLE advertisements, or from the standard Bluetooth
+  Battery Service when the earbuds don't send those,
+- battery history graph, notification, home-screen widgets, Quick Settings tile and the
+  connection popup,
+- media controls, in-app update checker, settings backup/restore, equalizer presets.
+
+What still needs a phone whose Bluetooth stack accepts Apple's private control channel
+(Android 17, Pixel on 16 QPR3, ColorOS/OxygenOS 16, realme UI 7 — or the optional LSPosed hook
+on older devices): listening modes (ANC/transparency/adaptive), ear detection, head gestures,
+conversational awareness and the Apple-only audio tweaks. On other phones those simply show as
+unavailable and PodMate stays in limited mode instead of failing silently.
+
+Why: Android's L2CAP client negotiates a flow-control/ERTM mode that AirPods refuse, so the
+channel is closed right after it opens ([Google issue 371713238](https://issuetracker.google.com/issues/371713238),
+fixed in Android 17). Patching that inside the Bluetooth stack is the one thing an app can't do
+without root — and PodMate no longer asks you for it. See the
+[upstream readme](https://github.com/kavishdevar/librepods#readme) for the device list.
 
 ## Building from source
 
