@@ -92,17 +92,6 @@ jobs:
         run: ./gradlew assembleFossRelease --stacktrace
         working-directory: android
 
-      - name: Surface compile errors (temporary debug)
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cd android
-          ./gradlew compileFossReleaseKotlin --console=plain 2>&1 | grep -E "^e: |error:" | head -120 > /tmp/errors.txt || true
-          if [ -s /tmp/errors.txt ]; then
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" -F "body=@/tmp/errors.txt" || true
-          fi
-
       - name: Rename APK
         run: |
           mkdir -p dist
