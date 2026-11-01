@@ -136,7 +136,8 @@ object LocalMacResolver {
 
         // 5. bt-pan interface (the Bluetooth PAN adapter carries the BD_ADDR).
         try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+            val enumeration = NetworkInterface.getNetworkInterfaces()
+            val interfaces = enumeration?.let { java.util.Collections.list(it) }.orEmpty()
             for (networkInterface in interfaces) {
                 if (!networkInterface.name.startsWith("bt")) continue
                 val hardwareAddress = networkInterface.hardwareAddress ?: continue
