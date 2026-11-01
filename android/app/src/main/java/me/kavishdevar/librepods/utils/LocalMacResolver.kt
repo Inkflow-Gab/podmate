@@ -114,7 +114,7 @@ object LocalMacResolver {
         if (adapter != null) {
             try {
                 val value = adapter.javaClass.getMethod("getAddress").invoke(adapter) as? String
-                if (isValidMac(value)) {
+                if (value != null && isValidMac(value)) {
                     Log.d(TAG, "Local MAC from BluetoothAdapter.getAddress()")
                     return value
                 }
@@ -126,7 +126,7 @@ object LocalMacResolver {
         // 4. Settings.Secure, readable on some OEM builds.
         try {
             val value = Settings.Secure.getString(context.contentResolver, "bluetooth_address")
-            if (isValidMac(value)) {
+            if (value != null && isValidMac(value)) {
                 Log.d(TAG, "Local MAC from Settings.Secure")
                 return value
             }
