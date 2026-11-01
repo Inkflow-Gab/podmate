@@ -112,6 +112,7 @@ fun AppNavGraph(
                                 navigateToTroubleshooting = { navigate(Screen.Troubleshooting) },
                                 navigateToCallControlScreen = { navigate(Screen.CallControl(it)) },
                                 navigateToMicrophoneSettings = { navigate(Screen.MicrophoneSettings) },
+                                navigateToBatteryHistory = { navigate(Screen.BatteryHistory) },
                             )
                         }
 

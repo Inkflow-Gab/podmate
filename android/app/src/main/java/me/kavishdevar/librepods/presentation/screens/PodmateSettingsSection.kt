@@ -52,8 +52,10 @@ import me.kavishdevar.librepods.R
 import me.kavishdevar.librepods.presentation.components.StyledButton
 import me.kavishdevar.librepods.presentation.components.StyledList
 import me.kavishdevar.librepods.presentation.components.StyledListItem
+import me.kavishdevar.librepods.presentation.components.StyledToggle
 import me.kavishdevar.librepods.utils.AppRelease
 import me.kavishdevar.librepods.utils.SettingsBackup
+import me.kavishdevar.librepods.bluetooth.L2capConnector
 import me.kavishdevar.librepods.utils.ShizukuState
 import me.kavishdevar.librepods.utils.XposedState
 
@@ -295,6 +297,34 @@ fun PodmateSettingsSection(
 
     Spacer(modifier = Modifier.height(16.dp))
 
+    // Compatibility switches — everything here works without root.
+    val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
+    var genericEarbuds by remember { mutableStateOf(prefs.getBoolean("generic_earbuds_mode", false)) }
+    var allowRootHelpers by remember { mutableStateOf(prefs.getBoolean("allow_root_helpers", false)) }
+
+    StyledList(title = stringResource(R.string.compatibility_section)) {
+        StyledToggle(
+            label = stringResource(R.string.generic_earbuds_title),
+            description = stringResource(R.string.generic_earbuds_description),
+            checked = genericEarbuds,
+            onCheckedChange = { checked ->
+                genericEarbuds = checked
+                prefs.edit().putBoolean("generic_earbuds_mode", checked).apply()
+            }
+        )
+        StyledToggle(
+            label = stringResource(R.string.allow_root_helpers_title),
+            description = stringResource(R.string.allow_root_helpers_description),
+            checked = allowRootHelpers,
+            onCheckedChange = { checked ->
+                allowRootHelpers = checked
+                prefs.edit().putBoolean("allow_root_helpers", checked).apply()
+            }
+        )
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
     StyledList(title = stringResource(R.string.troubleshooting_section)) {
         StyledListItem(
             name = stringResource(R.string.connection_diagnostics),
@@ -355,15 +385,24 @@ private fun collectConnectionDiagnostics(context: Context): String {
 
         val channelOk = prefs.getBoolean("connection_successful", false)
         lines += if (channelOk) {
-            "Data channel: worked before — reconnect AirPods to refresh"
+            "Apple control channel: worked before — reconnect the earbuds to refresh it"
         } else {
-            "Data channel: not established yet — ANC/battery may need root/Xposed on this Android"
+            "Apple control channel: not available yet (battery-only mode is used instead)"
+        }
+        // Exact reason of the most recent L2CAP attempt (no root involved).
+        lines += "Last control-channel attempt: ${L2capConnector.diagnosis()}"
+
+        val limitedMode = prefs.getBoolean("last_mode_limited", false)
+        lines += if (limitedMode) {
+            "Mode: limited (battery-only) — battery, popups, widgets and media controls work"
+        } else {
+            "Mode: full Apple features (or not connected)"
         }
 
         lines += when {
-            XposedState.isAvailable -> "Privileges: Xposed hook active"
-            ShizukuState.isGranted -> "Privileges: Shizuku connected"
-            else -> "Privileges: none (Shizuku optional, root optional)"
+            XposedState.isAvailable -> "Optional hook: Xposed/LSPosed active (adds VendorID extras)"
+            ShizukuState.isGranted -> "Optional helper: Shizuku connected (permissions, MAC)"
+            else -> "Optional helpers: none — root is never required"
         }
 
         return lines.joinToString("\n")

@@ -55,6 +55,7 @@ import me.kavishdevar.librepods.data.CustomEq
 import me.kavishdevar.librepods.data.StemAction
 import me.kavishdevar.librepods.data.XposedRemotePrefProvider
 import me.kavishdevar.librepods.services.AirPodsService
+import me.kavishdevar.librepods.utils.MediaController
 
 @Suppress("ArrayInDataClass")
 data class AirPodsUiState(
@@ -331,6 +332,15 @@ class AirPodsViewModel(
                         }
                     }
 
+                    AirPodsNotifications.AIRPODS_CONNECTED -> {
+                        // The device is bonded/connected, but we don't know yet
+                        // whether Apple's control channel works. The answer
+                        // arrives as AIRPODS_L2CAP_CONNECTED (full mode) or
+                        // AIRPODS_BLE_FALLBACK (limited mode) — don't guess here,
+                        // otherwise the battery-only UI never shows up.
+                        loadCurrentStatus()
+                    }
+
                     AirPodsNotifications.AIRPODS_BLE_FALLBACK -> {
                         _uiState.update {
                             it.copy(isLocallyConnected = true, isBleOnly = true)
@@ -366,6 +376,7 @@ class AirPodsViewModel(
 
         val filter = IntentFilter().apply {
             addAction(AirPodsNotifications.AIRPODS_CONNECTED)
+            addAction(AirPodsNotifications.AIRPODS_L2CAP_CONNECTED)
             addAction(AirPodsNotifications.AIRPODS_BLE_FALLBACK)
             addAction(AirPodsNotifications.AIRPODS_DISCONNECTED)
             addAction(AirPodsNotifications.BATTERY_DATA)
@@ -638,6 +649,28 @@ class AirPodsViewModel(
 
     fun reconnectFromSavedMac() {
         service.reconnectFromSavedMac()
+    }
+
+    /**
+     * Retry the full Apple control channel from limited mode. Rootless: it just
+     * re-runs the L2CAP attempts, so nothing has to be rooted for it to be safe.
+     */
+    fun retryControlChannel() {
+        service.retryControlChannel()
+    }
+
+    // Media controls that work with *any* connected earbuds (and with real
+    // AirPods when the control channel is unavailable) — no privileges needed.
+    fun togglePlayPause() {
+        MediaController.sendPlayPause()
+    }
+
+    fun nextTrack() {
+        MediaController.sendNextTrack()
+    }
+
+    fun previousTrack() {
+        MediaController.sendPreviousTrack()
     }
 
     fun setName(name: String) {

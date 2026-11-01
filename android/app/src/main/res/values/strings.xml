@@ -336,6 +336,13 @@
     <string name="shizuku_popup_enabled">Overlay permission enabled</string>
     <string name="shizuku_grant_failed">Could not run the command — approve PodMate in Shizuku first</string>
 
+    <!-- Compatibility (PodMate) -->
+    <string name="compatibility_section">Compatibility</string>
+    <string name="generic_earbuds_title">Treat any earbuds as AirPods</string>
+    <string name="generic_earbuds_description">Recognise non-Apple / clone earbuds too, so they get battery, popups, widgets and history. Nothing here needs root.</string>
+    <string name="allow_root_helpers_title">Allow root helpers (optional)</string>
+    <string name="allow_root_helpers_description">Off by default: PodMate never asks for root. Turn this on only if your phone is rooted and you want root as a fallback for things like the camera shutter.</string>
+
     <!-- Troubleshooting (PodMate) -->
     <string name="troubleshooting_section">Troubleshooting</string>
     <string name="connection_diagnostics">Connection diagnostics</string>
@@ -343,6 +350,14 @@
 
     <!-- Battery-only fallback mode (PodMate) -->
     <string name="limited_mode_title">Connected in battery-only mode</string>
-    <string name="limited_mode_note">Your AirPods aren\'t supporting Apple\'s control channel (this is the norm for AirPods bought online / clones, and on phones whose Bluetooth stack needs root). Battery levels, history and popups still work. Listening modes, ear detection and other advanced controls need real AirPods plus a compatible or rooted device.</string>
-    <string name="limited_mode_battery_history_hint">Your battery history is recorded — see Settings → PodMate</string>
+    <string name="limited_mode_note">PodMate could open a normal Bluetooth connection but not Apple\'s private control channel. That is what happens with clones/\"AirPods\" bought online, with real AirPods on phones whose Bluetooth stack rejects that channel, and on phones without root. Battery, battery history, the connection popup, widgets and media controls all keep working — nothing here needs root. Listening modes, ear detection and the other Apple-only features need real AirPods plus a device whose stack allows the channel (Android 17, some OEM builds, or the optional LSPosed hook).</string>
+    <string name="limited_mode_battery_history_hint">Battery levels are recorded in the background — tap to see the chart</string>
+    <string name="limited_mode_media_title">Media controls</string>
+    <string name="limited_mode_media_note">Control playback from here — the earbuds themselves keep working with their own buttons.</string>
+    <string name="limited_mode_retry_control_channel">Try the full AirPods connection again</string>
+    <string name="limited_mode_open_bluetooth_settings">Open Bluetooth settings</string>
+    <string name="limited_mode_open_bluetooth_settings_description">Re-pair the earbuds, then come back and try again</string>
+    <string name="media_previous">Previous</string>
+    <string name="media_play_pause">Play / pause</string>
+    <string name="media_next">Next</string>
 </resources>

@@ -25,6 +25,7 @@ import android.annotation.SuppressLint
 import android.content.Context.MODE_PRIVATE
 import android.content.Intent
 import android.content.SharedPreferences
+import android.provider.Settings
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -37,6 +38,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -144,7 +146,8 @@ fun AirPodsSettingsRoute(
     navigateToVersion: () -> Unit,
     navigateToTroubleshooting: () -> Unit,
     navigateToCallControlScreen: (action: String) -> Unit,
-    navigateToMicrophoneSettings: () -> Unit
+    navigateToMicrophoneSettings: () -> Unit,
+    navigateToBatteryHistory: () -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsState()
 
@@ -192,7 +195,13 @@ fun AirPodsSettingsRoute(
             navigateToMicrophoneSettings = navigateToMicrophoneSettings,
 
             activateDemoMode = viewModel::activateDemoMode,
-            reconnectFromSavedMac = viewModel::reconnectFromSavedMac
+            reconnectFromSavedMac = viewModel::reconnectFromSavedMac,
+
+            navigateToBatteryHistory = navigateToBatteryHistory,
+            retryControlChannel = viewModel::retryControlChannel,
+            onPlayPause = viewModel::togglePlayPause,
+            onNextTrack = viewModel::nextTrack,
+            onPreviousTrack = viewModel::previousTrack
         )
     }
 }
@@ -235,6 +244,12 @@ fun AirPodsSettingsScreen(
 
         activateDemoMode: () -> Unit,
         reconnectFromSavedMac: () -> Unit,
+
+        navigateToBatteryHistory: () -> Unit = {},
+        retryControlChannel: () -> Unit = {},
+        onPlayPause: () -> Unit = {},
+        onNextTrack: () -> Unit = {},
+        onPreviousTrack: () -> Unit = {},
 ) {
     val sharedPreferences = LocalContext.current.getSharedPreferences("settings", MODE_PRIVATE)
     var deviceName by remember {
@@ -645,11 +660,86 @@ fun AirPodsSettingsScreen(
                 )
             }
 
+            item(key = "limited_media") {
+                Text(
+                    text = stringResource(R.string.limited_mode_media_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = stringResource(R.string.limited_mode_media_note),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onPreviousTrack,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(text = stringResource(R.string.media_previous))
+                    }
+                    OutlinedButton(
+                        onClick = onPlayPause,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(text = stringResource(R.string.media_play_pause))
+                    }
+                    OutlinedButton(
+                        onClick = onNextTrack,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(text = stringResource(R.string.media_next))
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
             item(key = "limited_battery_history_hint") {
                 StyledListItem(
                     name = stringResource(R.string.battery_history),
                     description = stringResource(R.string.limited_mode_battery_history_hint),
-                    onClick = { }
+                    onClick = navigateToBatteryHistory
+                )
+            }
+
+            item(key = "limited_retry") {
+                Spacer(modifier = Modifier.height(8.dp))
+                StyledButton(
+                    onClick = retryControlChannel,
+                    backdrop = rememberLayerBackdrop(),
+                    isInteractive = false,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 56.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.limited_mode_retry_control_channel),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
+            item(key = "limited_bluetooth_settings") {
+                val context = LocalContext.current
+                StyledListItem(
+                    name = stringResource(R.string.limited_mode_open_bluetooth_settings),
+                    description = stringResource(R.string.limited_mode_open_bluetooth_settings_description),
+                    onClick = {
+                        try {
+                            context.startActivity(
+                                Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        } catch (_: Exception) {
+                        }
+                    }
                 )
             }
 
